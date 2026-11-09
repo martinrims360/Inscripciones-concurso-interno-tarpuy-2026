@@ -125,6 +125,9 @@ const GRADO_NIVEL = Object.fromEntries(
 
 const AULAS = [
   'Regular',
+  'Leoncitos',
+  'Ositos',
+  'Ardillitas',
   'C2',
   'C3',
   'C4',
