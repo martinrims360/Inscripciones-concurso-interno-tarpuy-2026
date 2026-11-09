@@ -1,13 +1,12 @@
-# fly.toml app configuration file generated for concurso-tarpuy-2026 on 2026-10-09T04:45:44Z
+# fly.toml app configuration file generated for concurso-interno-tarpuy-2026 on 2026-11-09T17:46:45Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'concurso-tarpuy-2026'
+app = 'concurso-interno-tarpuy-2026'
 primary_region = 'gru'
 
 [build]
-
 [env]
   NODE_ENV = 'production'
   PORT = '8080'
