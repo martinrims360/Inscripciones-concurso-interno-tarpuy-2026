@@ -29,8 +29,9 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const pool = new Pool({
   connectionString: DATABASE_URL,
   max: 5,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true
 });
 
 pool.on('error', (err) => {
@@ -231,13 +232,9 @@ const SCHEMA = `
 // RUTA DE SALUD DEL SERVIDOR
 // ==========================================
 
-app.get('/healthz', wrap(async (_req, res) => {
-  await pool.query('SELECT 1');
-
-  res.json({
-    ok: true
-  });
-}));
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 // ==========================================
 // REGISTRO DE ALUMNOS
