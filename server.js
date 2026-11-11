@@ -125,15 +125,15 @@ const GRADO_NIVEL = Object.fromEntries(
 
 const AULAS = [
   'Regular',
-  'Leoncitos',
-  'Ositos',
-  'Ardillitas',
   'C2',
   'C3',
   'C4',
   'BASICO',
   'INTERMEDIO',
-  'AVANZADO'
+  'AVANZADO',
+  'Leoncitos',
+  'Ositos',
+  'Ardillitas'
 ];
 
 const CATEGORIAS = [
@@ -221,6 +221,14 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_libres_created_at
     ON libres(created_at);
+
+  ALTER TABLE libres ADD COLUMN IF NOT EXISTS puntaje NUMERIC(6,2);
+  ALTER TABLE libres ADD COLUMN IF NOT EXISTS hora_entrega TIME;
+
+  CREATE TABLE IF NOT EXISTS config (
+    clave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+  );
 `;
 
 // ==========================================
@@ -463,6 +471,8 @@ async function loadInscripciones() {
        medio,
        pagador,
        verificado,
+       puntaje,
+       to_char(hora_entrega, 'HH24:MI:SS') AS hora,
        created_at
      FROM libres
      ORDER BY created_at DESC, id DESC`
@@ -482,6 +492,8 @@ async function loadInscripciones() {
     medio: row.medio || 'Yape',
     pagador: row.pagador || '',
     verificado: Boolean(row.verificado),
+    puntaje: row.puntaje === null ? null : Number(row.puntaje),
+    hora: row.hora || '',
     fecha: row.created_at
   }));
 }
@@ -564,6 +576,8 @@ app.get('/api/admin/export.xlsx', needAdmin, wrap(async (_req, res) => {
     { header: 'N° de operación', key: 'operacion', width: 24 },
     { header: 'Nombre de quien pagó', key: 'pagador', width: 30 },
     { header: 'Estado de pago', key: 'estado', width: 18 },
+    { header: 'Puntaje', key: 'puntaje', width: 12 },
+    { header: 'Hora de entrega', key: 'hora', width: 16 },
     { header: 'Fecha de inscripción', key: 'fecha', width: 24 }
   ];
 
@@ -614,6 +628,325 @@ app.get('/api/admin/export.xlsx', needAdmin, wrap(async (_req, res) => {
   await workbook.xlsx.write(res);
   res.end();
 }));
+
+// ==========================================
+// RESULTADOS DEL CONCURSO
+// ==========================================
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+function parsePuntaje(value) {
+  const n = Number(String(value ?? '').trim().replace(',', '.'));
+
+  if (!Number.isFinite(n) || n < 0 || n > 9999.99) {
+    throw bad('El puntaje debe ser un número entre 0 y 9999.99.');
+  }
+
+  return Math.round(n * 100) / 100;
+}
+
+// Acepta "10:42:15", "10:42", Date de Excel o fracción de día.
+function parseHora(value) {
+  if (value === null || value === undefined || value === '') return null;
+
+  let h;
+  let m;
+  let s;
+
+  if (value instanceof Date) {
+    h = value.getUTCHours();
+    m = value.getUTCMinutes();
+    s = value.getUTCSeconds();
+  } else if (typeof value === 'number') {
+    const total = Math.round((value % 1) * 86400);
+    h = Math.floor(total / 3600) % 24;
+    m = Math.floor((total % 3600) / 60);
+    s = total % 60;
+  } else {
+    const match = String(value).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+
+    if (!match) throw bad('La hora debe tener el formato HH:MM:SS.');
+
+    h = Number(match[1]);
+    m = Number(match[2]);
+    s = Number(match[3] || 0);
+  }
+
+  if (h > 23 || m > 59 || s > 59) {
+    throw bad('La hora de entrega no es válida.');
+  }
+
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
+}
+
+async function resultadosPublicados() {
+  const r = await pool.query(
+    "SELECT valor FROM config WHERE clave = 'resultados_publicados'"
+  );
+
+  return r.rows.length > 0 && r.rows[0].valor === '1';
+}
+
+// Público: solo nombre, grado, categoría, puntaje y hora (sin DNI ni celular).
+app.get('/api/resultados', wrap(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  const publicado = await resultadosPublicados();
+  const admin = isAdmin(req);
+
+  if (!publicado && !admin) {
+    return res.json({ publicado: false, vistaPrevia: false, items: [] });
+  }
+
+  const r = await pool.query(
+    `SELECT nombre, grado, nivel, categoria, puntaje,
+            to_char(hora_entrega, 'HH24:MI:SS') AS hora
+     FROM libres
+     WHERE puntaje IS NOT NULL`
+  );
+
+  res.json({
+    publicado,
+    vistaPrevia: !publicado && admin,
+    items: r.rows.map((x) => ({
+      nombre: x.nombre,
+      grado: x.grado,
+      nivel: x.nivel,
+      categoria: x.categoria || '',
+      puntaje: Number(x.puntaje),
+      hora: x.hora || ''
+    }))
+  });
+}));
+
+app.get('/api/admin/publicado', needAdmin, wrap(async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ publicado: await resultadosPublicados() });
+}));
+
+app.put('/api/admin/publicar', needAdmin, wrap(async (req, res) => {
+  const publicado = Boolean(req.body && req.body.publicado);
+
+  await pool.query(
+    `INSERT INTO config (clave, valor)
+     VALUES ('resultados_publicados', $1)
+     ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`,
+    [publicado ? '1' : '0']
+  );
+
+  res.json({ ok: true, publicado });
+}));
+
+// Guardar (o quitar) el puntaje de un alumno a partir de su DNI.
+app.put('/api/admin/puntaje', needAdmin, wrap(async (req, res) => {
+  const body = req.body || {};
+  const dni = clean(body.dni, 14);
+
+  if (!/^\d{8}$/.test(dni)) throw bad('El DNI debe tener 8 dígitos.');
+
+  const quitar = body.puntaje === null || body.puntaje === '';
+  const puntaje = quitar ? null : parsePuntaje(body.puntaje);
+  const hora = quitar ? null : parseHora(body.hora);
+
+  const r = await pool.query(
+    `UPDATE libres
+     SET puntaje = $2, hora_entrega = $3
+     WHERE dni = $1
+     RETURNING nombre`,
+    [dni, puntaje, hora]
+  );
+
+  if (!r.rowCount) {
+    throw new HttpError(404, `No hay ningún alumno inscrito con el DNI ${dni}.`);
+  }
+
+  res.json({ ok: true, nombre: r.rows[0].nombre });
+}));
+
+// Plantilla Excel con todos los inscritos, lista para llenar Puntaje y Hora.
+app.get('/api/admin/plantilla-puntajes.xlsx', needAdmin, wrap(async (_req, res) => {
+  const lista = await loadInscripciones();
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Puntajes', {
+    views: [{ state: 'frozen', ySplit: 1 }]
+  });
+
+  sheet.columns = [
+    { header: 'DNI', key: 'dni', width: 14 },
+    { header: 'Alumno', key: 'nombre', width: 40 },
+    { header: 'Grado', key: 'grado', width: 20 },
+    { header: 'Categoría', key: 'categoria', width: 48 },
+    { header: 'Puntaje', key: 'puntaje', width: 12 },
+    { header: 'Hora de entrega (HH:MM:SS)', key: 'hora', width: 28 }
+  ];
+
+  sheet.getColumn('dni').numFmt = '@';
+  sheet.getColumn('hora').numFmt = '@';
+
+  [...lista]
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    .forEach((x) => {
+      sheet.addRow({
+        dni: x.dni,
+        nombre: x.nombre,
+        grado: x.grado,
+        categoria: x.categoria,
+        puntaje: x.puntaje,
+        hora: x.hora
+      });
+    });
+
+  const header = sheet.getRow(1);
+  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  header.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF14532D' }
+  };
+
+  res.set({
+    'Content-Type':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition':
+      'attachment; filename="plantilla-puntajes-tarpuyana-2026.xlsx"',
+    'Cache-Control': 'no-store'
+  });
+
+  await workbook.xlsx.write(res);
+  res.end();
+}));
+
+const normHeader = (value) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+function cellValue(cell) {
+  let v = cell.value;
+
+  if (v && typeof v === 'object' && !(v instanceof Date)) {
+    if ('result' in v) v = v.result;
+    else if ('text' in v) v = v.text;
+    else if (Array.isArray(v.richText)) v = v.richText.map((t) => t.text).join('');
+  }
+
+  return v;
+}
+
+// Subida masiva: Excel con columnas DNI, Puntaje y Hora de entrega.
+app.post(
+  '/api/admin/puntajes-masivo',
+  needAdmin,
+  express.raw({ type: () => true, limit: '5mb' }),
+  wrap(async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) {
+      throw bad('Sube un archivo Excel (.xlsx).');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+
+    try {
+      await workbook.xlsx.load(req.body);
+    } catch (_err) {
+      throw bad('No se pudo leer el archivo. Debe ser un Excel (.xlsx).');
+    }
+
+    const sheet = workbook.worksheets[0];
+
+    if (!sheet) throw bad('El Excel no tiene hojas.');
+
+    let headerRow = 0;
+    let cDni = 0;
+    let cPun = 0;
+    let cHora = 0;
+
+    for (let r = 1; r <= Math.min(5, sheet.rowCount) && !headerRow; r += 1) {
+      sheet.getRow(r).eachCell((cell, col) => {
+        const h = normHeader(cellValue(cell));
+
+        if (h === 'dni') cDni = col;
+        else if (h.startsWith('puntaje') || h === 'puntos' || h === 'nota') cPun = col;
+        else if (h.startsWith('hora')) cHora = col;
+      });
+
+      if (cDni && cPun) headerRow = r;
+    }
+
+    if (!headerRow) {
+      throw bad('No encontré las columnas "DNI" y "Puntaje". Descarga la plantilla y úsala.');
+    }
+
+    const filas = [];
+    const errores = [];
+
+    for (let r = headerRow + 1; r <= sheet.rowCount; r += 1) {
+      const row = sheet.getRow(r);
+      const rawDni = cellValue(row.getCell(cDni));
+      const rawPun = cellValue(row.getCell(cPun));
+      const rawHora = cHora ? cellValue(row.getCell(cHora)) : null;
+
+      const vacio = (v) => v === null || v === undefined || String(v).trim() === '';
+
+      if (vacio(rawDni) || (vacio(rawPun) && vacio(rawHora))) continue;
+
+      try {
+        const dni = String(rawDni).trim().replace(/\.0+$/, '').padStart(8, '0');
+
+        if (!/^\d{8}$/.test(dni)) throw bad(`DNI no válido (${rawDni}).`);
+        if (vacio(rawPun)) throw bad('Falta el puntaje.');
+
+        filas.push({
+          fila: r,
+          dni,
+          puntaje: parsePuntaje(rawPun),
+          hora: parseHora(rawHora)
+        });
+      } catch (err) {
+        errores.push({ fila: r, mensaje: err.message });
+      }
+
+      if (filas.length + errores.length > 5000) {
+        throw bad('El archivo tiene demasiadas filas (máximo 5000).');
+      }
+    }
+
+    let actualizados = 0;
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      for (const f of filas) {
+        const r = await client.query(
+          `UPDATE libres SET puntaje = $2, hora_entrega = $3 WHERE dni = $1`,
+          [f.dni, f.puntaje, f.hora]
+        );
+
+        if (r.rowCount) actualizados += 1;
+        else errores.push({ fila: f.fila, mensaje: `El DNI ${f.dni} no está inscrito.` });
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    errores.sort((a, b) => a.fila - b.fila);
+
+    res.json({
+      ok: true,
+      actualizados,
+      totalErrores: errores.length,
+      errores: errores.slice(0, 50)
+    });
+  })
+);
 
 // ==========================================
 // ARCHIVOS ESTÁTICOS
