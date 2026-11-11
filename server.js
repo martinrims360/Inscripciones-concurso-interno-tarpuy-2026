@@ -635,11 +635,19 @@ app.get('/api/admin/export.xlsx', needAdmin, wrap(async (_req, res) => {
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-function parsePuntaje(value) {
+// Puntaje máximo según el nivel del alumno.
+const PUNTAJE_MAX = { Inicial: 200, Primaria: 150, Secundaria: 150 };
+
+function parsePuntaje(value, nivel) {
+  const max = PUNTAJE_MAX[nivel] ?? 150;
   const n = Number(String(value ?? '').trim().replace(',', '.'));
 
-  if (!Number.isFinite(n) || n < 0 || n > 9999.99) {
-    throw bad('El puntaje debe ser un número entre 0 y 9999.99.');
+  if (!Number.isFinite(n) || n < 0) {
+    throw bad('El puntaje debe ser un número válido.');
+  }
+
+  if (n > max) {
+    throw bad(`El puntaje máximo en ${nivel || 'este nivel'} es ${max}.`);
   }
 
   return Math.round(n * 100) / 100;
@@ -744,8 +752,14 @@ app.put('/api/admin/puntaje', needAdmin, wrap(async (req, res) => {
 
   if (!/^\d{8}$/.test(dni)) throw bad('El DNI debe tener 8 dígitos.');
 
+  const found = await pool.query('SELECT nivel FROM libres WHERE dni = $1', [dni]);
+
+  if (!found.rowCount) {
+    throw new HttpError(404, `No hay ningún alumno inscrito con el DNI ${dni}.`);
+  }
+
   const quitar = body.puntaje === null || body.puntaje === '';
-  const puntaje = quitar ? null : parsePuntaje(body.puntaje);
+  const puntaje = quitar ? null : parsePuntaje(body.puntaje, found.rows[0].nivel);
   const hora = quitar ? null : parseHora(body.hora);
 
   const r = await pool.query(
@@ -777,6 +791,7 @@ app.get('/api/admin/plantilla-puntajes.xlsx', needAdmin, wrap(async (_req, res) 
     { header: 'Alumno', key: 'nombre', width: 40 },
     { header: 'Grado', key: 'grado', width: 20 },
     { header: 'Categoría', key: 'categoria', width: 48 },
+    { header: 'Puntaje máx.', key: 'max', width: 14 },
     { header: 'Puntaje', key: 'puntaje', width: 12 },
     { header: 'Hora de entrega (HH:MM:SS)', key: 'hora', width: 28 }
   ];
@@ -792,6 +807,7 @@ app.get('/api/admin/plantilla-puntajes.xlsx', needAdmin, wrap(async (_req, res) 
         nombre: x.nombre,
         grado: x.grado,
         categoria: x.categoria,
+        max: PUNTAJE_MAX[x.nivel] ?? 150,
         puntaje: x.puntaje,
         hora: x.hora
       });
@@ -868,7 +884,7 @@ app.post(
         const h = normHeader(cellValue(cell));
 
         if (h === 'dni') cDni = col;
-        else if (h.startsWith('puntaje') || h === 'puntos' || h === 'nota') cPun = col;
+        else if ((h.startsWith('puntaje') && !h.includes('max')) || h === 'puntos' || h === 'nota') cPun = col;
         else if (h.startsWith('hora')) cHora = col;
       });
 
@@ -881,6 +897,9 @@ app.post(
 
     const filas = [];
     const errores = [];
+    const niveles = new Map(
+      (await pool.query('SELECT dni, nivel FROM libres')).rows.map((x) => [x.dni, x.nivel])
+    );
 
     for (let r = headerRow + 1; r <= sheet.rowCount; r += 1) {
       const row = sheet.getRow(r);
@@ -896,12 +915,13 @@ app.post(
         const dni = String(rawDni).trim().replace(/\.0+$/, '').padStart(8, '0');
 
         if (!/^\d{8}$/.test(dni)) throw bad(`DNI no válido (${rawDni}).`);
+        if (!niveles.has(dni)) throw bad(`El DNI ${dni} no está inscrito.`);
         if (vacio(rawPun)) throw bad('Falta el puntaje.');
 
         filas.push({
           fila: r,
           dni,
-          puntaje: parsePuntaje(rawPun),
+          puntaje: parsePuntaje(rawPun, niveles.get(dni)),
           hora: parseHora(rawHora)
         });
       } catch (err) {
