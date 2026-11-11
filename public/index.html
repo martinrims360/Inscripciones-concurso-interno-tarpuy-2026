@@ -147,7 +147,7 @@ footer{color:#bfe9cf}footer a{color:#86efac}
     <div class="rule"></div>
     <p class="tagline">Tarpuy, antigua voz quechua que significa sembrar</p>
     <p class="lead">Ficha de inscripción · Solo para alumnos internos. ¡Demuestra tu talento, piensa sin límites!</p>
-    <div class="chips" style="justify-content:center"><span class="date">📅 <b>Viernes 13 de noviembre</b></span><span>Solo para alumnos internos</span><span>🏆 <b>Grandes premios</b></span></div>
+    <div class="chips" style="justify-content:center"><span class="date">📅 <b>Viernes 13 de noviembre</b></span><span>Solo para alumnos internos</span><span>🏆 <b>Grandes premios</b></span><span><a href="/resultados.html" style="color:#fff;text-decoration:none">📊 <b>Ver resultados</b></a></span></div>
   </div>
 </header>
 <main>
@@ -158,8 +158,7 @@ footer{color:#bfe9cf}footer a{color:#86efac}
   <div class="grid">
     <div><label>DNI *</label><input id="ldni" inputmode="numeric" maxlength="8" placeholder="8 dígitos"></div>
     <div><label>Grado *</label><select id="lgrado"></select></div>
-    <div><label>Aula *</label><select id="laula"><option value="">Elegir…</option><option>Regular</option><option>C2</option><option>C3</option><option>C4</option><option>BASICO</option><option>INTERMEDIO</option><option>AVANZADO</option></select></div>
-    <div class="full"><label>Categoría *</label><select id="lcat"><option value="">Elegir…</option><option>CATEGORÍA “A” : GOTTFRIED LEIBNIZ (Alumnos regulares)</option><option>CATEGORÍA “B” : FRIEDRICH GAUSS (Alumnos de círculo)</option></select></div>
+    <div class="full"><label>Categoría *</label><select id="lcat"><option value="">Elegir…</option><option value="CATEGORÍA “A”">CATEGORÍA “A”</option><option value="CATEGORÍA “B”">CATEGORÍA “B”</option></select></div>
     <div class="full"><label>Apellidos y nombres *</label><input id="lnom" placeholder="Apellidos y nombres del alumno"></div>
     <div class="full"><label>Celular / WhatsApp *</label><input id="lcel" inputmode="tel" maxlength="9" placeholder="9 dígitos, para comunicarnos por WhatsApp"></div>
   </div>
@@ -180,7 +179,7 @@ footer{color:#bfe9cf}footer a{color:#86efac}
   <div class="row" style="margin:0 0 12px"><button class="btn" id="xl">⬇ Descargar Excel</button> <button class="btn sec" id="lo">Cerrar sesión</button></div>
   <div class="tw hide"><table><tbody id="tb"></tbody></table></div>
   <h3 style="margin:18px 0 8px">Alumnos inscritos</h3>
-  <div class="tw"><table><thead><tr><th>DNI</th><th>Grado</th><th>Aula</th><th>Categoría</th><th>Apellidos y nombres</th><th>Celular</th><th>Monto</th><th>N° operación</th><th>Pago</th></tr></thead><tbody id="tbl"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th>DNI</th><th>Grado</th><th>Categoría</th><th>Apellidos y nombres</th><th>Celular</th><th>Monto</th><th>N° operación</th><th>Pago</th></tr></thead><tbody id="tbl"></tbody></table></div>
 </section>
 </main>
 <footer><img id="logo2" class="biglogo small" alt="Tarpuy"><br>VIII Olimpiada Tarpuyana · Concurso Interno de Matemáticas 2026<br>Consultas por WhatsApp: <a href="https://wa.me/51991999201">991 999 201</a> · <a href="https://wa.me/51995973374">995 973 374</a><br>¡La matemática también se vive en equipo!<br><a href="#" id="adm" style="font-size:12px;opacity:.65">Acceso organizador</a></footer>
@@ -248,17 +247,16 @@ $("sendL").onclick=async()=>{
   bad=mark($("ldni"),!/^\d{8}$/.test($("ldni").value))||bad;
   bad=mark($("lgrado"),!$("lgrado").value)||bad;
   bad=mark($("lnom"),!$("lnom").value.trim())||bad;
-  bad=mark($("laula"),!$("laula").value)||bad;
   bad=mark($("lcat"),!$("lcat").value)||bad;
   const efe=medio("payLib")==="Efectivo";
   bad=mark($("plOp"),!efe&&!opsOk($("plOp").value))||bad;
   bad=mark($("plPg"),!$("plPg").value.trim())||bad;
   if(bad)return m("Revisa los campos en rojo.","bad");
   const g=G[$("lgrado").value];
-  const data={dni:$("ldni").value,grado:g.n,nivel:g.v,aula:$("laula").value,categoria:$("lcat").value,nombre:$("lnom").value.trim(),tel:$("lcel").value, monto:P_LIB,operacion:efe?"":splitOps($("plOp").value).join(", "),medio:medio("payLib"),pagador:$("plPg").value.trim(),fecha:new Date().toISOString()};
+  const data={dni:$("ldni").value,grado:g.n,nivel:g.v,categoria:$("lcat").value,nombre:$("lnom").value.trim(),tel:$("lcel").value, monto:P_LIB,operacion:efe?"":splitOps($("plOp").value).join(", "),medio:medio("payLib"),pagador:$("plPg").value.trim(),fecha:new Date().toISOString()};
   try{$("sendL").disabled=true;await api("/api/libres",data);
-    m("¡Inscripción enviada! "+data.nombre+" ("+data.grado+", aula "+data.aula+"). Pago registrado: S/ "+P_LIB+".","ok");
-    ["ldni","lnom","lcel","plOp","plPg"].forEach(i=>$(i).value="");$("lgrado").value="";$("laula").value="";$("lcat").value="";
+    m("¡Inscripción enviada! "+data.nombre+" ("+data.grado+"). Pago registrado: S/ "+P_LIB+".","ok");
+    ["ldni","lnom","lcel","plOp","plPg"].forEach(i=>$(i).value="");$("lgrado").value="";$("lcat").value="";
   }catch(e){m("Error al enviar: "+(e.message||e.code),"bad")}
   $("sendL").disabled=false;
 };
@@ -268,7 +266,7 @@ function render(){
   rows.forEach(r=>r._c="fichas");libres.forEach(r=>r._c="libres");
   dups={};[...rows,...libres].forEach(r=>splitOps(r.operacion).forEach(o=>dups[o]=(dups[o]||0)+1));
   $("kl").textContent=libres.length;$("kr").textContent="S/ "+(rows.reduce((s,r)=>s+(r.monto||0),0)+libres.reduce((s,r)=>s+(r.monto||0),0));
-  $("tbl").innerHTML=libres.map(r=>`<tr><td>${esc(r.dni)}</td><td>${esc(r.grado)}</td><td>${esc(r.aula)}</td><td>${esc(r.categoria)}</td><td>${esc(r.nombre)}</td><td>${esc(r.tel)}</td><td>S/ ${r.monto||""}</td>${opCell(r)}</tr>`).join("");
+  $("tbl").innerHTML=libres.map(r=>`<tr><td>${esc(r.dni)}</td><td>${esc(r.grado)}</td><td>${esc(r.categoria)}</td><td>${esc(r.nombre)}</td><td>${esc(r.tel)}</td><td>S/ ${r.monto||""}</td>${opCell(r)}</tr>`).join("");
   
   $("tb").innerHTML=rows.map(r=>`<tr><td>${esc(r.ie)}</td><td>${esc(r.tipo)}</td><td>${esc(r.director)}</td><td>${esc(r.tel)}</td><td>${r.alumnos.length}</td><td>S/ ${r.monto||""}</td>${opCell(r)}</tr>`).join("");
 }

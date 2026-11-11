@@ -1,11 +1,16 @@
 {
-  "name": "concurso-tarpuy",
+  "name": "concurso-interno-tarpuy-2026",
   "version": "1.0.0",
-  "description": "Inscripciones del XI Concurso Nacional de Matemática Lima Este 2026",
+  "description": "Sistema de inscripciones de la VIII Olimpiada Tarpuyana - Concurso Interno de Matemáticas 2026",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
+    "dotenv": "^18.0.10",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
