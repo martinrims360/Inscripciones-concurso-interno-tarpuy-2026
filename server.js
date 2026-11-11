@@ -695,7 +695,8 @@ async function resultadosPublicados() {
   return r.rows.length > 0 && r.rows[0].valor === '1';
 }
 
-// Público: solo nombre, grado, categoría, puntaje y hora (sin DNI ni celular).
+// Público: todos los inscritos (sin puntaje = "No rindió"). Solo nombre, grado,
+// categoría, puntaje y hora: sin DNI ni celular.
 app.get('/api/resultados', wrap(async (req, res) => {
   res.set('Cache-Control', 'no-store');
 
@@ -709,8 +710,7 @@ app.get('/api/resultados', wrap(async (req, res) => {
   const r = await pool.query(
     `SELECT nombre, grado, nivel, categoria, puntaje,
             to_char(hora_entrega, 'HH24:MI:SS') AS hora
-     FROM libres
-     WHERE puntaje IS NOT NULL`
+     FROM libres`
   );
 
   res.json({
@@ -721,7 +721,7 @@ app.get('/api/resultados', wrap(async (req, res) => {
       grado: x.grado,
       nivel: x.nivel,
       categoria: x.categoria || '',
-      puntaje: Number(x.puntaje),
+      puntaje: x.puntaje === null ? null : Number(x.puntaje),
       hora: x.hora || ''
     }))
   });
