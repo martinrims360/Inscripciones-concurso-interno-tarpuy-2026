@@ -1,33 +1,26 @@
-# fly.toml app configuration file generated for concurso-interno-tarpuy-2026 on 2026-11-09T17:46:45Z
-# fly.toml app configuration file generated for concurso-interno-tarpuy-2026 on 2026-10-09T04:45:44Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+app = "concurso-interno-tarpuy-2026"
+primary_region = "gru"
 
-app = 'concurso-interno-tarpuy-2026'
-primary_region = 'gru'
-
-[build]
 [env]
-  NODE_ENV = 'production'
-  PORT = '8080'
-  PRECIO_DELEGACION = '13'
-  PRECIO_LIBRE = '10'
+  NODE_ENV = "production"
+  PORT = "8080"
+  PRECIO_DELEGACION = "13"
+  PRECIO_LIBRE = "10"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'off'
   auto_start_machines = true
+  auto_stop_machines = "off"
   min_machines_running = 1
 
   [[http_service.checks]]
-    interval = '30s'
-    timeout = '5s'
-    grace_period = '20s'
-    method = 'GET'
-    path = '/healthz'
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
 
 [[vm]]
-  size = 'shared-cpu-1x'
-  memory = '256mb'
+  size = "shared-cpu-1x"
+  memory = "512mb"
