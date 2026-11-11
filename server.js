@@ -123,23 +123,14 @@ const GRADO_NIVEL = Object.fromEntries(
   GRADOS.map((g) => [g.n, g.v])
 );
 
-const AULAS = [
-  'Regular',
-  'C2',
-  'C3',
-  'C4',
-  'BASICO',
-  'INTERMEDIO',
-  'AVANZADO',
-  'Leoncitos',
-  'Ositos',
-  'Ardillitas'
-];
+const CATEGORIAS = ['CATEGORÍA “A”', 'CATEGORÍA “B”'];
 
-const CATEGORIAS = [
-  'CATEGORÍA “A” : GOTTFRIED LEIBNIZ (Alumnos regulares)',
-  'CATEGORÍA “B” : FRIEDRICH GAUSS (Alumnos de círculo)'
-];
+// Acepta también los textos largos antiguos y los guarda siempre en forma simple.
+function normCategoria(valor) {
+  if (/^CATEGOR[ÍI]A\s*[“"]A[”"]/i.test(valor)) return CATEGORIAS[0];
+  if (/^CATEGOR[ÍI]A\s*[“"]B[”"]/i.test(valor)) return CATEGORIAS[1];
+  return '';
+}
 
 // ==========================================
 // VALIDACIÓN DE PAGOS
@@ -225,6 +216,11 @@ const SCHEMA = `
   ALTER TABLE libres ADD COLUMN IF NOT EXISTS puntaje NUMERIC(6,2);
   ALTER TABLE libres ADD COLUMN IF NOT EXISTS hora_entrega TIME;
 
+  UPDATE libres SET categoria = 'CATEGORÍA “A”'
+    WHERE categoria LIKE 'CATEGORÍA “A”%' AND categoria <> 'CATEGORÍA “A”';
+  UPDATE libres SET categoria = 'CATEGORÍA “B”'
+    WHERE categoria LIKE 'CATEGORÍA “B”%' AND categoria <> 'CATEGORÍA “B”';
+
   CREATE TABLE IF NOT EXISTS config (
     clave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
@@ -256,8 +252,7 @@ app.post('/api/libres', writeLimiter, wrap(async (req, res) => {
 
   const nombre = clean(body.nombre, 120);
   const telefono = clean(body.tel, 20);
-  const aula = clean(body.aula, 20);
-  const categoria = clean(body.categoria, 120);
+  const categoria = normCategoria(clean(body.categoria, 120));
   const pagador = clean(body.pagador, 120);
 
   // Validaciones
@@ -276,10 +271,6 @@ app.post('/api/libres', writeLimiter, wrap(async (req, res) => {
 
   if (!/^9\d{8}$/.test(telefono)) {
     throw bad('El celular debe tener 9 dígitos y empezar con 9.');
-  }
-
-  if (!AULAS.includes(aula)) {
-    throw bad('Elige un aula válida.');
   }
 
   if (!CATEGORIAS.includes(categoria)) {
@@ -306,14 +297,13 @@ app.post('/api/libres', writeLimiter, wrap(async (req, res) => {
           nivel,
           nombre,
           telefono,
-          aula,
           categoria,
           monto,
           operacion,
           medio,
           pagador
         )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
         dni,
@@ -321,7 +311,6 @@ app.post('/api/libres', writeLimiter, wrap(async (req, res) => {
         nivel,
         nombre,
         telefono,
-        aula,
         categoria,
         PRECIO_INSCRIPCION,
         operacion,
@@ -463,7 +452,6 @@ async function loadInscripciones() {
        grado,
        nivel,
        nombre,
-       aula,
        categoria,
        telefono,
        monto,
@@ -484,7 +472,6 @@ async function loadInscripciones() {
     grado: row.grado,
     nivel: row.nivel,
     nombre: row.nombre,
-    aula: row.aula || '',
     categoria: row.categoria || '',
     tel: row.telefono || '',
     monto: Number(row.monto) || 0,
@@ -567,7 +554,6 @@ app.get('/api/admin/export.xlsx', needAdmin, wrap(async (_req, res) => {
     { header: 'DNI', key: 'dni', width: 14 },
     { header: 'Grado', key: 'grado', width: 20 },
     { header: 'Nivel', key: 'nivel', width: 15 },
-    { header: 'Aula', key: 'aula', width: 16 },
     { header: 'Categoría', key: 'categoria', width: 48 },
     { header: 'Apellidos y nombres', key: 'nombre', width: 38 },
     { header: 'Celular / WhatsApp', key: 'tel', width: 20 },
