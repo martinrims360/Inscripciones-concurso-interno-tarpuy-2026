@@ -777,6 +777,37 @@ app.put('/api/admin/puntaje', needAdmin, wrap(async (req, res) => {
   res.json({ ok: true, nombre: r.rows[0].nombre });
 }));
 
+// Quitar puntaje y hora de forma masiva: por lista de DNI o de todo el concurso.
+app.post('/api/admin/quitar-puntajes', needAdmin, wrap(async (req, res) => {
+  const body = req.body || {};
+  let r;
+
+  if (body.todos === true) {
+    if (body.confirmar !== 'ELIMINAR') throw bad('Falta la confirmación.');
+
+    r = await pool.query(
+      `UPDATE libres SET puntaje = NULL, hora_entrega = NULL
+       WHERE puntaje IS NOT NULL OR hora_entrega IS NOT NULL`
+    );
+  } else {
+    const dnis = Array.isArray(body.dnis) ? [...new Set(body.dnis.map(String))] : [];
+
+    if (!dnis.length) throw bad('No seleccionaste ningún alumno.');
+    if (dnis.length > 5000 || dnis.some((d) => !/^\d{8}$/.test(d))) {
+      throw bad('La lista de DNI no es válida.');
+    }
+
+    r = await pool.query(
+      `UPDATE libres SET puntaje = NULL, hora_entrega = NULL
+       WHERE dni = ANY($1::text[])
+         AND (puntaje IS NOT NULL OR hora_entrega IS NOT NULL)`,
+      [dnis]
+    );
+  }
+
+  res.json({ ok: true, quitados: r.rowCount });
+}));
+
 // Plantilla Excel con todos los inscritos, lista para llenar Puntaje y Hora.
 app.get('/api/admin/plantilla-puntajes.xlsx', needAdmin, wrap(async (_req, res) => {
   const lista = await loadInscripciones();
