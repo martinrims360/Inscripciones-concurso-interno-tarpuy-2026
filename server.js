@@ -29,9 +29,8 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const pool = new Pool({
   connectionString: DATABASE_URL,
   max: 5,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 10000,
-  keepAlive: true
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
 });
 
 pool.on('error', (err) => {
@@ -232,9 +231,13 @@ const SCHEMA = `
 // RUTA DE SALUD DEL SERVIDOR
 // ==========================================
 
-app.get('/healthz', (_req, res) => {
-  res.status(200).json({ ok: true });
-});
+app.get('/healthz', wrap(async (_req, res) => {
+  await pool.query('SELECT 1');
+
+  res.json({
+    ok: true
+  });
+}));
 
 // ==========================================
 // REGISTRO DE ALUMNOS
@@ -605,6 +608,125 @@ app.get('/api/admin/export.xlsx', needAdmin, wrap(async (_req, res) => {
     'Content-Disposition':
       'attachment; filename="inscripciones-olimpiada-tarpuyana-2026.xlsx"',
 
+    'Cache-Control': 'no-store'
+  });
+
+  await workbook.xlsx.write(res);
+  res.end();
+}));
+
+// ==========================================
+// EXCEL: PAGOS PENDIENTES DE VERIFICAR
+// ==========================================
+
+const GRADOS_ORDEN = [
+  'Inicial · 3 años',
+  'Inicial · 4 años',
+  'Inicial · 5 años',
+  ...[1, 2, 3, 4, 5, 6].map((n) => `${n}° de Primaria`),
+  ...[1, 2, 3, 4, 5].map((n) => `${n}° de Secundaria`)
+];
+
+const ordenGrado = (g) => {
+  const i = GRADOS_ORDEN.indexOf(g);
+  return i < 0 ? 99 : i;
+};
+
+const splitOps = (v) => String(v || '').split(/[,;\s]+/).filter(Boolean);
+
+app.get('/api/admin/export-pendientes.xlsx', needAdmin, wrap(async (_req, res) => {
+  const todas = await loadInscripciones();
+
+  // Cuántas veces aparece cada N° de operación (para avisar repetidos).
+  const veces = {};
+
+  todas.forEach((r) => {
+    splitOps(r.operacion).forEach((o) => {
+      veces[o] = (veces[o] || 0) + 1;
+    });
+  });
+
+  const pendientes = todas
+    .filter((r) => !r.verificado)
+    .sort(
+      (a, b) =>
+        ordenGrado(a.grado) - ordenGrado(b.grado) ||
+        a.grado.localeCompare(b.grado, 'es') ||
+        a.categoria.localeCompare(b.categoria, 'es') ||
+        a.nombre.localeCompare(b.nombre, 'es')
+    );
+
+  const workbook = new ExcelJS.Workbook();
+
+  workbook.creator = 'Tarpuy - VIII Olimpiada Tarpuyana 2026';
+  workbook.created = new Date();
+
+  const sheet = workbook.addWorksheet('Pagos pendientes', {
+    views: [{ state: 'frozen', ySplit: 1 }]
+  });
+
+  sheet.columns = [
+    { header: 'N°', key: 'numero', width: 7 },
+    { header: 'DNI', key: 'dni', width: 14 },
+    { header: 'Grado', key: 'grado', width: 20 },
+    { header: 'Categoría', key: 'categoria', width: 18 },
+    { header: 'Apellidos y nombres', key: 'nombre', width: 38 },
+    { header: 'Celular / WhatsApp', key: 'tel', width: 20 },
+    { header: 'Monto (S/)', key: 'monto', width: 13 },
+    { header: 'Medio de pago', key: 'medio', width: 16 },
+    { header: 'N° de operación', key: 'operacion', width: 24 },
+    { header: '¿Operación repetida?', key: 'repetida', width: 20 },
+    { header: 'Nombre de quien pagó', key: 'pagador', width: 30 },
+    { header: 'Fecha de inscripción', key: 'fecha', width: 24 },
+    { header: 'Observaciones', key: 'obs', width: 30 }
+  ];
+
+  sheet.getColumn('dni').numFmt = '@';
+
+  pendientes.forEach((row, index) => {
+    const repetida = splitOps(row.operacion).some((o) => veces[o] > 1);
+
+    const fila = sheet.addRow({
+      numero: index + 1,
+      dni: row.dni,
+      grado: row.grado,
+      categoria: row.categoria,
+      nombre: row.nombre,
+      tel: row.tel,
+      monto: row.monto,
+      medio: row.medio,
+      operacion: row.operacion,
+      repetida: repetida ? 'SÍ' : 'No',
+      pagador: row.pagador,
+      fecha: row.fecha ? new Date(row.fecha).toLocaleString('es-PE') : '',
+      obs: ''
+    });
+
+    if (repetida) {
+      fila.getCell('repetida').font = { bold: true, color: { argb: 'FFB91C1C' } };
+    }
+  });
+
+  const header = sheet.getRow(1);
+
+  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  header.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF14532D' }
+  };
+  header.alignment = { vertical: 'middle', wrapText: true };
+
+  sheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: sheet.columns.length }
+  };
+
+  res.set({
+    'Content-Type':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition':
+      'attachment; filename="pagos-pendientes-tarpuyana-2026.xlsx"',
     'Cache-Control': 'no-store'
   });
 
