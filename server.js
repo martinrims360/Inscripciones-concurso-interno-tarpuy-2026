@@ -984,6 +984,191 @@ app.get('/api/resultados/buscar', buscarLimiter, wrap(async (req, res) => {
   res.json({ resultados });
 }));
 
+// ---- Excel del organizador: Cómputos generales + Ranking hasta el 10.º puesto ----
+app.get('/api/admin/export-ranking.xlsx', needAdmin, wrap(async (_req, res) => {
+  const todos = await cargarAlumnosResultados();
+  const conPuntaje = todos.filter((x) => x.puntaje !== null && x.cat);
+  const niveles = ['Inicial', 'Primaria', 'Secundaria'];
+  const nombreCat = { A: 'Categoría “A” · Gottfried Leibniz', B: 'Categoría “B” · Friedrich Gauss' };
+
+  // Grados de cada nivel, en orden (más cualquier grado raro que aparezca en los datos).
+  const gradosDeNivel = {};
+
+  niveles.forEach((n) => {
+    gradosDeNivel[n] = GRADOS_ORDEN.filter((g) =>
+      n === 'Inicial' ? g.startsWith('Inicial') : g.includes(n)
+    );
+  });
+
+  todos.forEach((x) => {
+    if (gradosDeNivel[x.nivel] && !gradosDeNivel[x.nivel].includes(x.grado)) {
+      gradosDeNivel[x.nivel].push(x.grado);
+    }
+  });
+
+  const workbook = new ExcelJS.Workbook();
+
+  workbook.creator = 'Tarpuy - VIII Olimpiada Tarpuyana 2026';
+  workbook.created = new Date();
+
+  const VERDE = 'FF14532D';
+  const LIMA = 'FFD9F99D';
+  const relleno = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+  const colorPuesto = { 1: 'FFFFE066', 2: 'FFE2E8F0', 3: 'FFFFB470', 4: 'FF7EE8FA', 5: 'FFEAB8FF' };
+
+  // Fila de título combinada (banda de color) sobre las columnas 1..n.
+  const banda = (sheet, texto, n, { fondo, color, size = 12, alto = 24 }) => {
+    const row = sheet.addRow([texto]);
+
+    sheet.mergeCells(row.number, 1, row.number, n);
+    row.height = alto;
+
+    const c = row.getCell(1);
+
+    c.value = texto;
+    c.fill = relleno(fondo);
+    c.font = { bold: true, size, color: { argb: color } };
+    c.alignment = { vertical: 'middle', wrapText: true };
+
+    return row;
+  };
+
+  const cabecera = (sheet, titulos) => {
+    const row = sheet.addRow(titulos);
+
+    row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    row.fill = relleno(VERDE);
+    row.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+    return row;
+  };
+
+  const pintaPuesto = (cell, merito) => {
+    if (colorPuesto[merito]) {
+      cell.fill = relleno(colorPuesto[merito]);
+      cell.font = { bold: true };
+    }
+
+    cell.alignment = { horizontal: 'center' };
+  };
+
+  const TITULO = 'VIII OLIMPIADA TARPUYANA · CONCURSO INTERNO DE MATEMÁTICAS 2026';
+
+  // ================= Hoja 1: cómputos generales =================
+  const gen = workbook.addWorksheet('Cómputos generales', {
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+  });
+
+  gen.columns = [
+    { width: 14 }, { width: 9 }, { width: 14 }, { width: 38 },
+    { width: 20 }, { width: 11 }, { width: 16 }, { width: 34 }
+  ];
+
+  banda(gen, `${TITULO} — CÓMPUTOS GENERALES (1.er puesto de cada nivel y categoría)`, 8, {
+    fondo: 'FFFFFFFF', color: VERDE, size: 13, alto: 36
+  });
+  gen.addRow([]);
+
+  for (const cat of ['A', 'B']) {
+    banda(gen, nombreCat[cat].toUpperCase(), 8, { fondo: VERDE, color: 'FFFFFFFF', size: 13 });
+    cabecera(gen, ['Nivel', 'Puesto', 'DNI', 'Alumno', 'Grado', 'Puntaje', 'Hora de entrega', 'Observación']);
+
+    for (const nivel of niveles) {
+      const ganadores = rankear(
+        conPuntaje.filter((x) => x.nivel === nivel && x.cat === cat)
+      ).filter((x) => x.merito === 1);
+
+      if (!ganadores.length) {
+        const f = gen.addRow([nivel, '—', '', '', '', '', '', 'Sin puntajes aún']);
+
+        f.getCell(8).font = { italic: true, color: { argb: 'FF6B7280' } };
+        continue;
+      }
+
+      ganadores.forEach((g) => {
+        const f = gen.addRow([
+          nivel, 1, g.dni, g.nombre, g.grado, g.puntaje, g.hora,
+          ganadores.length > 1 ? 'Empate en puntaje y hora de entrega' : ''
+        ]);
+
+        f.getCell(3).numFmt = '@';
+        f.getCell(6).alignment = { horizontal: 'center' };
+        f.getCell(7).alignment = { horizontal: 'center' };
+        pintaPuesto(f.getCell(2), 1);
+      });
+    }
+
+    gen.addRow([]);
+  }
+
+  // ================= Hojas 2 y 3: ranking Top 10 por categoría =================
+  for (const cat of ['A', 'B']) {
+    const hoja = workbook.addWorksheet(`Top 10 - Categoría ${cat}`, {
+      pageSetup: { orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+    });
+
+    hoja.columns = [{ width: 10 }, { width: 14 }, { width: 42 }, { width: 11 }, { width: 18 }];
+
+    banda(hoja, `${TITULO} — RANKING HASTA EL 10.º PUESTO · ${nombreCat[cat].toUpperCase()}`, 5, {
+      fondo: 'FFFFFFFF', color: VERDE, size: 13, alto: 38
+    });
+    hoja.addRow([]);
+
+    for (const nivel of niveles) {
+      banda(hoja, `NIVEL ${nivel.toUpperCase()}`, 5, {
+        fondo: VERDE, color: 'FFFFFFFF', size: 14, alto: 28
+      });
+
+      for (const grado of gradosDeNivel[nivel]) {
+        const delGrupo = todos.filter((x) => x.grado === grado && x.cat === cat);
+        const rankeados = rankear(delGrupo.filter((x) => x.puntaje !== null));
+        const noRindio = delGrupo.length - rankeados.length;
+
+        banda(
+          hoja,
+          `${grado}   ·   ${rankeados.length} con puntaje${noRindio ? ` · ${noRindio} no rindió` : ''}`,
+          5,
+          { fondo: LIMA, color: VERDE, size: 12 }
+        );
+        cabecera(hoja, ['Mérito', 'DNI', 'Alumno', 'Puntaje', 'Hora de entrega']);
+
+        const top = rankeados.filter((x) => x.merito <= 10);
+
+        if (!top.length) {
+          const f = hoja.addRow(['—', '', 'Sin puntajes aún', '', '']);
+
+          f.font = { italic: true, color: { argb: 'FF6B7280' } };
+        }
+
+        top.forEach((x) => {
+          const f = hoja.addRow([x.merito, x.dni, x.nombre, x.puntaje, x.hora]);
+
+          f.getCell(2).numFmt = '@';
+          f.getCell(4).alignment = { horizontal: 'center' };
+          f.getCell(5).alignment = { horizontal: 'center' };
+          pintaPuesto(f.getCell(1), x.merito);
+        });
+
+        hoja.addRow([]);
+      }
+
+      // Cada nivel empieza en una página nueva al imprimir.
+      hoja.getRow(hoja.rowCount).addPageBreak();
+    }
+  }
+
+  res.set({
+    'Content-Type':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition':
+      'attachment; filename="ranking-y-computos-tarpuyana-2026.xlsx"',
+    'Cache-Control': 'no-store'
+  });
+
+  await workbook.xlsx.write(res);
+  res.end();
+}));
+
 app.get('/api/admin/publicado', needAdmin, wrap(async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ publicado: await resultadosPublicados() });
